@@ -496,10 +496,23 @@ OK_LINE=	'^'$(OK_CHAR)'*$$'
 GNUTARFLAGS= --format=pax --pax-option='delete=atime,delete=ctime' \
   --numeric-owner --owner=0 --group=0 \
   --mode=go+u,go-w --sort=name
+SET_MTIME_OPTION=--set-mtime-command=TZ=UTC0 git log -1 --format='tformat:%cI'
+SET_UPDIR_MTIME_OPTION=--set-mtime-command=TZ=UTC0 cd .. && git log -1 --format='tformat:%cI'
+
 TARFLAGS=	`if tar $(GNUTARFLAGS) --version >/dev/null 2>&1; \
 		 then echo $(GNUTARFLAGS); \
 		 else :; \
 		 fi`
+
+TARMTIMEFLAGS=  "`if tar "$(SET_MTIME_OPTION)" --version >/dev/null 2>&1; \
+		 then echo $(SET_MTIME_OPTION); \
+                 else :; \
+                 fi`"
+
+TARUPDIRMTIMEFLAGS=  "`if tar "$(SET_UPDIR_MTIME_OPTION)" --version >/dev/null 2>&1; \
+		 then echo $(SET_UPDIR_MTIME_OPTION); \
+                 else :; \
+                 fi`"
 
 # Flags to give 'gzip' when making a distribution.
 GZIPFLAGS=	-9n
@@ -987,32 +1000,36 @@ SET_TIMESTAMP_DEP = $(SET_TIMESTAMP_N) 1
 # Also, set the timestamp of each prebuilt file like 'leapseconds'
 # to be the maximum of the files it depends on.
 set-timestamps.out: $(EIGHT_YARDS)
-		rm -f $@
-		if (type git) >/dev/null 2>&1 && \
-		   files=`git ls-files $(EIGHT_YARDS)` && \
-		   touch -md @1 test.out; then \
-		  rm -f test.out && \
-		  for file in $$files; do \
-		    if git diff --quiet $$file; then \
-		      time=`TZ=UTC0 git log -1 \
-			--format='tformat:%cd' \
-			--date='format:%Y-%m-%dT%H:%M:%SZ' \
-			$$file` && \
-		      echo "+ touch -md $$time $$file" && \
-		      touch -md $$time $$file; \
-		    else \
-		      echo >&2 "$$file: warning: does not match repository"; \
-		    fi || exit; \
+		if ! tar $(GNUTARFLAGS) "$(SET_MTIME_OPTION)" --version >/dev/null 2>&1; \
+		then \
+		  rm -f $@; \
+		  if (type git) >/dev/null 2>&1 && \
+		     files=`git ls-files $(EIGHT_YARDS)` && \
+		     touch -md @1 test.out; then \
+		    rm -f test.out && \
+		    for file in $$files; do \
+		      if git diff --quiet $$file; then \
+		        time=`TZ=UTC0 git log -1 \
+		  	  --format='tformat:%cd' \
+			  --date='format:%Y-%m-%dT%H:%M:%SZ' \
+			  $$file` && \
+		        echo "+ touch -md $$time $$file" && \
+		        touch -md $$time $$file; \
+		      else \
+		        echo >&2 "$$file: warning: does not match repository"; \
+		      fi || exit; \
+		    done; \
+		  fi; \
+		  $(SET_TIMESTAMP_DEP) leapseconds $(LEAP_DEPS); \
+		  for file in `ls $(MANTXTS) | sed 's/\.txt$$//'`; do \
+		    $(SET_TIMESTAMP_DEP) $$file.txt $$file workman.sh || \
+		      exit; \
 		  done; \
+		  $(SET_TIMESTAMP_DEP) version $(VERSION_DEPS); \
+		  $(SET_TIMESTAMP_DEP) tzdata.zi $(TZDATA_ZI_DEPS); \
 		fi
-		$(SET_TIMESTAMP_DEP) leapseconds $(LEAP_DEPS)
-		for file in `ls $(MANTXTS) | sed 's/\.txt$$//'`; do \
-		  $(SET_TIMESTAMP_DEP) $$file.txt $$file workman.sh || \
-		    exit; \
-		done
-		$(SET_TIMESTAMP_DEP) version $(VERSION_DEPS)
-		$(SET_TIMESTAMP_DEP) tzdata.zi $(TZDATA_ZI_DEPS)
 		touch $@
+
 set-tzs-timestamp.out: $(TZS)
 		$(SET_TIMESTAMP_DEP) $(TZS) $(TZS_DEPS)
 		touch $@
@@ -1124,14 +1141,14 @@ traditional_signatures_version: $(TRADITIONAL_ASC)
 
 tzcode$(VERSION).tar.gz: set-timestamps.out
 		LC_ALL=C && export LC_ALL && \
-		tar $(TARFLAGS) -cf - \
+		tar $(TARFLAGS) $(TARMTIMEFLAGS) -cf - \
 		    $(COMMON) $(DOCS) $(SOURCES) | \
 		  gzip $(GZIPFLAGS) >$@.out
 		mv $@.out $@
 
 tzdata$(VERSION).tar.gz: set-timestamps.out
 		LC_ALL=C && export LC_ALL && \
-		tar $(TARFLAGS) -cf - $(TZDATA_DIST) | \
+		tar $(TARFLAGS) $(TARMTIMEFLAGS) -cf - $(TZDATA_DIST) | \
 		  gzip $(GZIPFLAGS) >$@.out
 		mv $@.out $@
 
@@ -1158,7 +1175,7 @@ tzdata$(VERSION)-rearguard.tar.gz: rearguard.zi set-timestamps.out
 		touch -mr version $@.dir/version
 		LC_ALL=C && export LC_ALL && \
 		  (cd $@.dir && \
-		   tar $(TARFLAGS) -cf - \
+		   tar $(TARFLAGS) $(TARUPDIRMTIMEFLAGS) -cf - \
 			$(TZDATA_DIST) pacificnew | \
 		     gzip $(GZIPFLAGS)) >$@.out
 		mv $@.out $@
@@ -1198,7 +1215,7 @@ tzdata$(VERSION)-tailored.tar.gz: set-timestamps.out
 		  ln $$links $@.dir
 		LC_ALL=C && export LC_ALL && \
 		  (cd $@.dir && \
-		   tar $(TARFLAGS) -cf - * | gzip $(GZIPFLAGS)) >$@.out
+		   tar $(TARFLAGS) $(TARUPDIRMTIMEFLAGS) -cf - * | gzip $(GZIPFLAGS)) >$@.out
 		mv $@.out $@
 
 tzdb-$(VERSION).tar.lz: set-timestamps.out set-tzs-timestamp.out
@@ -1207,7 +1224,7 @@ tzdb-$(VERSION).tar.lz: set-timestamps.out set-tzs-timestamp.out
 		ln $(ENCHILADA) tzdb-$(VERSION)
 		$(SET_TIMESTAMP) tzdb-$(VERSION) tzdb-$(VERSION)/*
 		LC_ALL=C && export LC_ALL && \
-		tar $(TARFLAGS) -cf - tzdb-$(VERSION) | lzip -9 >$@.out
+		tar $(TARFLAGS) $(TARMTIMEFLAGS) -cf - tzdb-$(VERSION) | lzip -9 >$@.out
 		mv $@.out $@
 
 tzcode$(VERSION).tar.gz.asc: tzcode$(VERSION).tar.gz
